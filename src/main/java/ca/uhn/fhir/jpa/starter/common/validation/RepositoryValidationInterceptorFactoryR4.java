@@ -10,6 +10,7 @@ import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.jpa.starter.annotations.OnR4Condition;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.param.TokenParam;
+import ca.uhn.fhir.validation.ResultSeverityEnum;
 import org.hl7.fhir.r4.model.StructureDefinition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Conditional;
@@ -60,7 +61,10 @@ public class RepositoryValidationInterceptorFactoryR4 implements IRepositoryVali
 					.forResourcesOfType(key)
 					.requireAtLeastOneProfileOf(urls)
 					.and()
-					.requireValidationToDeclaredProfiles();
+					.requireValidationToDeclaredProfiles()
+					.rejectOnSeverity(ResultSeverityEnum.WARNING)
+					.suppressNoBindingMessage()
+					.suppressWarningForExtensibleValueSetValidation();
 		});
 
 		List<IRepositoryValidatingRule> rules = repositoryValidatingRuleBuilder.build();

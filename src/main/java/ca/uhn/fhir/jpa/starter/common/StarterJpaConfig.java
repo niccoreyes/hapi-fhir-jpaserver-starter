@@ -491,14 +491,14 @@ public class StarterJpaConfig {
 		// reindex Provider $reindex
 		fhirServer.registerProvider(reindexProvider);
 
+		// Custom interceptors run before built-in validation (e.g. dedup merges before profile checks)
+		registerCustomInterceptors(fhirServer, appContext, appProperties.getCustomInterceptorClasses());
+
 		// Validation
 		repositoryValidatingInterceptor.ifPresent(fhirServer::registerInterceptor);
 
 		// Diff Provider
 		fhirServer.registerProvider(diffProvider);
-
-		// register custom interceptors
-		registerCustomInterceptors(fhirServer, appContext, appProperties.getCustomInterceptorClasses());
 
 		// register the IPS Provider
 		theIpsOperationProvider.ifPresent(fhirServer::registerProvider);
