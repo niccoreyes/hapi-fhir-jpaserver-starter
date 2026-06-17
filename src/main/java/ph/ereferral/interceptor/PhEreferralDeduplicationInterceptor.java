@@ -5,18 +5,25 @@ import ca.uhn.fhir.interceptor.api.Interceptor;
 import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
+import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
+import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.api.server.ResponseDetails;
 import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
 import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
+import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Identifier;
+import org.hl7.fhir.r4.model.OperationOutcome;
 import org.hl7.fhir.r4.model.Organization;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Practitioner;
+import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -29,6 +36,9 @@ import java.util.List;
 public class PhEreferralDeduplicationInterceptor {
 
 	private static final Logger ourLog = LoggerFactory.getLogger(PhEreferralDeduplicationInterceptor.class);
+
+	private static final String DEDUP_MERGED_KEY = PhEreferralDeduplicationInterceptor.class.getName() + ".MERGED";
+	private static final String DEDUP_EXISTING_ID_KEY = PhEreferralDeduplicationInterceptor.class.getName() + ".EXISTING_ID";
 
 	private final DaoRegistry daoRegistry;
 
@@ -53,25 +63,56 @@ public class PhEreferralDeduplicationInterceptor {
 
 		ourLog.info("DEDUP: Merge complete into {}", existingId.getIdPart());
 
-		String summary = buildMergeSummary(resource, existingId);
-		throw new BaseServerResponseException(200, summary) {
-			private static final long serialVersionUID = 1L;
-			@Override public int getStatusCode() { return 200; }
-		};
+		theRequestDetails.getUserData().put(DEDUP_MERGED_KEY, merged);
+		theRequestDetails.getUserData().put(DEDUP_EXISTING_ID_KEY, existingId);
+
+		String location = theRequestDetails.getFhirServerBase() + "/"
+				+ merged.getIdElement().toUnqualifiedVersionless().getValue();
+		throw new DeduplicationMatchedException("Duplicate: returned merged resource " + existingId.getIdPart())
+				.addResponseHeader(Constants.HEADER_LOCATION, location);
 	}
 
-	private String buildMergeSummary(IBaseResource incoming, IdType existingId) {
-		StringBuilder sb = new StringBuilder();
-		sb.append("Merged into ").append(existingId.toUnqualifiedVersionless().getValue());
-		if (incoming instanceof Patient p) {
-			if (p.hasGender()) sb.append(" [gender=").append(p.getGender().toCode()).append("]");
-			if (!p.getName().isEmpty()) {
-				var n = p.getNameFirstRep();
-				sb.append(" [name=").append(n.getFamily()).append(", ").append(n.getGivenAsSingleString()).append("]");
-			}
+	@Hook(Pointcut.SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME)
+	public void replaceFailureWithMergedBundle(
+			RequestDetails theRequestDetails,
+			IBaseOperationOutcome theOperationOutcome,
+			ResponseDetails theResponseDetails) {
+
+		IBaseResource merged = (IBaseResource) theRequestDetails.getUserData().remove(DEDUP_MERGED_KEY);
+		IdType existingId = (IdType) theRequestDetails.getUserData().remove(DEDUP_EXISTING_ID_KEY);
+		if (merged == null) return;
+
+		Bundle bundle = new Bundle();
+		bundle.setType(Bundle.BundleType.COLLECTION);
+		bundle.setTotal(2);
+
+		bundle.addEntry()
+				.setResource((Resource) merged)
+				.getResponse()
+				.setStatus("200");
+
+		OperationOutcome info = new OperationOutcome();
+		info.addIssue()
+				.setSeverity(OperationOutcome.IssueSeverity.INFORMATION)
+				.setCode(OperationOutcome.IssueType.INFORMATIONAL)
+				.setDiagnostics(String.format(
+						"Merged incoming %s into existing resource %s",
+						merged.fhirType(),
+						existingId.toUnqualifiedVersionless().getValue()));
+		bundle.addEntry()
+				.setResource(info)
+				.getResponse()
+				.setStatus("200");
+
+		theResponseDetails.setResponseResource(bundle);
+		theResponseDetails.setResponseCode(Constants.STATUS_HTTP_200_OK);
+	}
+
+	public static class DeduplicationMatchedException extends BaseServerResponseException {
+		private static final long serialVersionUID = 1L;
+		public DeduplicationMatchedException(String theMessage) {
+			super(Constants.STATUS_HTTP_200_OK, theMessage);
 		}
-		sb.append(" — incoming overwrote where present; existing non-empty fields preserved; identifiers unioned");
-		return sb.toString();
 	}
 
 	// ── Search ─────────────────────────────────────────────────────────────────
