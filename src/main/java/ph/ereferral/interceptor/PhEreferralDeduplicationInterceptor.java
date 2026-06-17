@@ -14,6 +14,7 @@ import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
 import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.server.exceptions.BaseServerResponseException;
 import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
+import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
@@ -50,18 +51,25 @@ public class PhEreferralDeduplicationInterceptor {
 	public void deduplicateOnCreate(
 			ServletRequestDetails theRequestDetails,
 			RestOperationTypeEnum theOperationType) {
-		if (theOperationType != RestOperationTypeEnum.CREATE) return;
 		if (theRequestDetails.getResource() == null) return;
 
+		if (theOperationType == RestOperationTypeEnum.CREATE) {
+			handleIndividualCreate(theRequestDetails);
+		} else if (theOperationType == RestOperationTypeEnum.TRANSACTION) {
+			handleTransactionBundle(theRequestDetails);
+		}
+	}
+
+	private void handleIndividualCreate(ServletRequestDetails theRequestDetails) {
 		IBaseResource resource = theRequestDetails.getResource();
 		IdType existingId = findExistingByMatch(resource);
 		if (existingId == null) return;
 
-		ourLog.info("DEDUP: Found match → {} — merging", existingId.getIdPart());
-		IBaseResource merged = mergeIntoExisting(resource, existingId);
+		ourLog.info("DEDUP (individual): Found match → {} — merging", existingId.getIdPart());
+		IBaseResource merged = mergeAndPersist(resource, existingId);
 		if (merged == null) return;
 
-		ourLog.info("DEDUP: Merge complete into {}", existingId.getIdPart());
+		ourLog.info("DEDUP (individual): Merge complete into {}", existingId.getIdPart());
 
 		theRequestDetails.getUserData().put(DEDUP_MERGED_KEY, merged);
 		theRequestDetails.getUserData().put(DEDUP_EXISTING_ID_KEY, existingId);
@@ -70,6 +78,50 @@ public class PhEreferralDeduplicationInterceptor {
 				+ merged.getIdElement().toUnqualifiedVersionless().getValue();
 		throw new DeduplicationMatchedException("Duplicate: returned merged resource " + existingId.getIdPart())
 				.addResponseHeader(Constants.HEADER_LOCATION, location);
+	}
+
+	private void handleTransactionBundle(ServletRequestDetails theRequestDetails) {
+		IBaseResource raw = theRequestDetails.getResource();
+		if (!(raw instanceof Bundle bundle)) return;
+		if (bundle.getType() != Bundle.BundleType.TRANSACTION) return;
+
+		int dedupCount = 0;
+		List<Bundle.BundleEntryComponent> entries = bundle.getEntry();
+		for (Bundle.BundleEntryComponent entry : entries) {
+			if (entry.getRequest().getMethod() != Bundle.HTTPVerb.POST) continue;
+			if (entry.getResource() == null) continue;
+
+			IdType existingId = findExistingByMatch(entry.getResource());
+			if (existingId == null) continue;
+
+			ourLog.info("DEDUP (transaction): Found match → {} — merging entry in Bundle",
+					existingId.getIdPart());
+
+			IBaseResource existing;
+			try {
+				existing = daoRegistry.getResourceDao(existingId.getResourceType()).read(existingId);
+			} catch (Exception e) {
+				ourLog.error("DEDUP (transaction): Failed to read existing {}", existingId.getIdPart(), e);
+				continue;
+			}
+
+			IBaseResource merged = mergeResources(existing, entry.getResource());
+			if (merged == null) continue;
+
+			merged.setId(existingId.toUnqualifiedVersionless());
+
+			entry.setResource((Resource) merged);
+			entry.getRequest().setMethod(Bundle.HTTPVerb.PUT);
+			entry.getRequest().setUrl(existingId.toUnqualifiedVersionless().getValue());
+
+			dedupCount++;
+			ourLog.info("DEDUP (transaction): Merged entry into {} → entry now PUT",
+					existingId.getIdPart());
+		}
+
+		if (dedupCount > 0) {
+			ourLog.info("DEDUP (transaction): Deduplicated {} entries in Bundle", dedupCount);
+		}
 	}
 
 	@Hook(Pointcut.SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME)
@@ -155,26 +207,29 @@ public class PhEreferralDeduplicationInterceptor {
 
 	// ── Merge ──────────────────────────────────────────────────────────────────
 
-	private IBaseResource mergeIntoExisting(IBaseResource incoming, IdType existingId) {
+	private IBaseResource mergeAndPersist(IBaseResource incoming, IdType existingId) {
 		try {
 			IBaseResource existing = daoRegistry.getResourceDao(existingId.getResourceType()).read(existingId);
-			IBaseResource merged;
-			if (existing instanceof Patient ep && incoming instanceof Patient ip) {
-				merged = mergePatient(ep, ip);
-			} else if (existing instanceof Practitioner ep && incoming instanceof Practitioner ip) {
-				merged = mergePractitioner(ep, ip);
-			} else if (existing instanceof Organization eo && incoming instanceof Organization io) {
-				merged = mergeOrganization(eo, io);
-			} else {
-				return null;
-			}
+			IBaseResource merged = mergeResources(existing, incoming);
+			if (merged == null) return null;
 			merged.setId(existingId.toUnqualifiedVersionless());
 			daoRegistry.getResourceDao(existingId.getResourceType()).update(merged, new SystemRequestDetails());
 			return merged;
 		} catch (Exception e) {
-			ourLog.error("DEDUP: Merge failed", e);
+			ourLog.error("DEDUP: Merge+persist failed", e);
 			return null;
 		}
+	}
+
+	private IBaseResource mergeResources(IBaseResource existing, IBaseResource incoming) {
+		if (existing instanceof Patient ep && incoming instanceof Patient ip) {
+			return mergePatient(ep, ip);
+		} else if (existing instanceof Practitioner ep && incoming instanceof Practitioner ip) {
+			return mergePractitioner(ep, ip);
+		} else if (existing instanceof Organization eo && incoming instanceof Organization io) {
+			return mergeOrganization(eo, io);
+		}
+		return null;
 	}
 
 	private Patient mergePatient(Patient existing, Patient incoming) {
