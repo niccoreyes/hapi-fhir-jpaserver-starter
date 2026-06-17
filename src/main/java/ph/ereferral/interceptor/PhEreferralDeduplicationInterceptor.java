@@ -1,6 +1,5 @@
 package ph.ereferral.interceptor;
 
-import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.Hook;
 import ca.uhn.fhir.interceptor.api.Interceptor;
 import ca.uhn.fhir.interceptor.api.Pointcut;
@@ -16,10 +15,8 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.Organization;
-import org.hl7.fhir.r4.model.OperationOutcome;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Practitioner;
-import org.hl7.fhir.r4.model.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -57,23 +54,27 @@ public class PhEreferralDeduplicationInterceptor {
 		ourLog.info("DEDUP: Merge complete into {}", existingId.getIdPart());
 
 		String summary = buildMergeSummary(resource, existingId);
-		throw new DedupResponseException(existingId, summary);
+		throw new BaseServerResponseException(200, summary) {
+			private static final long serialVersionUID = 1L;
+			@Override public int getStatusCode() { return 200; }
+		};
 	}
 
 	private String buildMergeSummary(IBaseResource incoming, IdType existingId) {
 		StringBuilder sb = new StringBuilder();
-		sb.append("Resource deduplicated and merged into ").append(existingId.toUnqualifiedVersionless().getValue());
+		sb.append("Merged into ").append(existingId.toUnqualifiedVersionless().getValue());
 		if (incoming instanceof Patient p) {
 			if (p.hasGender()) sb.append(" [gender=").append(p.getGender().toCode()).append("]");
 			if (!p.getName().isEmpty()) {
 				var n = p.getNameFirstRep();
-				sb.append(" [name=").append(n.getFamily()).append(", ").append(String.join(" ", n.getGivenAsSingleString())).append("]");
+				sb.append(" [name=").append(n.getFamily()).append(", ").append(n.getGivenAsSingleString()).append("]");
 			}
 		}
-		sb.append(" — incoming fields overwrote existing where present; "
-				+ "existing non-empty fields preserved; identifier lists unioned.");
+		sb.append(" — incoming overwrote where present; existing non-empty fields preserved; identifiers unioned");
 		return sb.toString();
 	}
+
+	// ── Search ─────────────────────────────────────────────────────────────────
 
 	private IdType findExistingByMatch(IBaseResource resource) {
 		if (resource instanceof Patient p) {
@@ -110,6 +111,8 @@ public class PhEreferralDeduplicationInterceptor {
 				.max(Comparator.comparing(r -> r.getMeta().getLastUpdated()))
 				.orElse(null);
 	}
+
+	// ── Merge ──────────────────────────────────────────────────────────────────
 
 	private IBaseResource mergeIntoExisting(IBaseResource incoming, IdType existingId) {
 		try {
@@ -178,18 +181,5 @@ public class PhEreferralDeduplicationInterceptor {
 
 	private boolean isEmpty(List<?> list) {
 		return list == null || list.isEmpty();
-	}
-
-	private static class DedupResponseException extends BaseServerResponseException {
-		private static final long serialVersionUID = 1L;
-
-		DedupResponseException(IdType existingId, String summary) {
-			super(200, summary);
-		}
-
-		@Override
-		public int getStatusCode() {
-			return 200;
-		}
 	}
 }
