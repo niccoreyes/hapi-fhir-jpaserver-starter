@@ -186,7 +186,9 @@ public class PhEreferralDeduplicationInterceptor {
 		if (isEmpty(result.getTelecom()) && !isEmpty(existing.getTelecom())) result.setTelecom(existing.getTelecom());
 		if (isEmpty(result.getAddress()) && !isEmpty(existing.getAddress())) result.setAddress(existing.getAddress());
 		if (isEmpty(result.getContact()) && !isEmpty(existing.getContact())) result.setContact(existing.getContact());
-		result.setActive(existing.getActive());
+		if (result.getActiveElement() == null && existing.getActiveElement() != null) {
+			result.setActive(existing.getActive());
+		}
 		return result;
 	}
 
@@ -198,7 +200,9 @@ public class PhEreferralDeduplicationInterceptor {
 		if (isEmpty(result.getAddress()) && !isEmpty(existing.getAddress())) result.setAddress(existing.getAddress());
 		if (!result.hasGender() && existing.hasGender()) result.setGender(existing.getGender());
 		if (!result.hasBirthDate() && existing.hasBirthDate()) result.setBirthDateElement(existing.getBirthDateElement());
-		result.setActive(existing.getActive());
+		if (result.getActiveElement() == null && existing.getActiveElement() != null) {
+			result.setActive(existing.getActive());
+		}
 		return result;
 	}
 
