@@ -1,3 +1,30 @@
+> :warning: **PERSONAL FORK** — This is a personal fork of
+> [hapifhir/hapi-fhir-jpaserver-starter](https://github.com/hapifhir/hapi-fhir-jpaserver-starter)
+> (upstream v8.8.0), customized for the **PH eReferral** system.
+> See the parent project at
+> [niccoreyes/aiscream-jpa](https://github.com/niccoreyes/aiscream-jpa).
+
+## Fork deviations from upstream
+
+| File | Change | Reason |
+|------|--------|--------|
+| `RepositoryValidationInterceptorFactoryR4.java` | `.rejectOnSeverity(WARNING)` + suppression methods | Unknown code systems (e.g., PSGC) reject instead of warn |
+| `StarterJpaConfig.java` | Custom interceptors registered before `RepositoryValidatingInterceptor` | Dedup must run before validation |
+| `PhCoreDeduplicationInterceptor.java` | New interceptor in `ph.ereferral.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles |
+
+### Dedup interceptor details
+
+- Hooks `SERVER_INCOMING_REQUEST_PRE_HANDLED` for `CREATE` and `TRANSACTION` operations
+- Individual `POST`: merges via DAO, returns HTTP 200 with `Bundle` (merged resource + informational `OperationOutcome`)
+- Transaction `Bundle`: converts matching entries from `POST` to `PUT` against existing resource ID, preserving `fullUrl` for reference resolution
+- Response format via `SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME` — replaces `OperationOutcome` with merged resource
+
+### Docker image
+
+Built and pushed to [niccoreyes/aiscream-hapi](https://hub.docker.com/r/niccoreyes/aiscream-hapi) as `:latest`.
+
+---
+
 # HAPI-FHIR Starter Project
 
 This project is a complete starter project you can use to deploy a FHIR server using HAPI FHIR JPA.
