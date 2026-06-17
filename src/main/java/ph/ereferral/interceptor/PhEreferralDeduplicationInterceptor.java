@@ -1,5 +1,6 @@
 package ph.ereferral.interceptor;
 
+import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.interceptor.api.Hook;
 import ca.uhn.fhir.interceptor.api.Interceptor;
 import ca.uhn.fhir.interceptor.api.Pointcut;
@@ -15,8 +16,10 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.Organization;
+import org.hl7.fhir.r4.model.OperationOutcome;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Practitioner;
+import org.hl7.fhir.r4.model.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -47,35 +50,65 @@ public class PhEreferralDeduplicationInterceptor {
 		IdType existingId = findExistingByMatch(resource);
 		if (existingId == null) return;
 
-		ourLog.info("DEDUP: Found match {} — merging", existingId.getIdPart());
+		ourLog.info("DEDUP: Found match → {} — merging", existingId.getIdPart());
 		IBaseResource merged = mergeIntoExisting(resource, existingId);
 		if (merged == null) return;
 
 		ourLog.info("DEDUP: Merge complete into {}", existingId.getIdPart());
-		throw new DedupResponseException(existingId);
+
+		String summary = buildMergeSummary(resource, existingId);
+		throw new DedupResponseException(existingId, summary);
+	}
+
+	private String buildMergeSummary(IBaseResource incoming, IdType existingId) {
+		StringBuilder sb = new StringBuilder();
+		sb.append("Resource deduplicated and merged into ").append(existingId.toUnqualifiedVersionless().getValue());
+		if (incoming instanceof Patient p) {
+			if (p.hasGender()) sb.append(" [gender=").append(p.getGender().toCode()).append("]");
+			if (!p.getName().isEmpty()) {
+				var n = p.getNameFirstRep();
+				sb.append(" [name=").append(n.getFamily()).append(", ").append(String.join(" ", n.getGivenAsSingleString())).append("]");
+			}
+		}
+		sb.append(" — incoming fields overwrote existing where present; "
+				+ "existing non-empty fields preserved; identifier lists unioned.");
+		return sb.toString();
 	}
 
 	private IdType findExistingByMatch(IBaseResource resource) {
 		if (resource instanceof Patient p) {
 			for (Identifier id : p.getIdentifier()) {
 				if (!id.hasSystem() || !id.hasValue()) continue;
-				Patient existing = searchPatientByIdentifier(id.getSystem(), id.getValue());
-				if (existing != null) return existing.getIdElement();
+				IBaseResource existing = searchByIdentifier("Patient", id.getSystem(), id.getValue());
+				if (existing != null) return new IdType(existing.getIdElement().getValue());
 			}
 		} else if (resource instanceof Practitioner p) {
 			for (Identifier id : p.getIdentifier()) {
 				if (!id.hasSystem() || !id.hasValue()) continue;
-				Practitioner existing = searchPractitionerByIdentifier(id.getSystem(), id.getValue());
-				if (existing != null) return existing.getIdElement();
+				IBaseResource existing = searchByIdentifier("Practitioner", id.getSystem(), id.getValue());
+				if (existing != null) return new IdType(existing.getIdElement().getValue());
 			}
 		} else if (resource instanceof Organization o) {
 			for (Identifier id : o.getIdentifier()) {
 				if (!id.hasSystem() || !id.hasValue()) continue;
-				Organization existing = searchOrganizationByIdentifier(id.getSystem(), id.getValue());
-				if (existing != null) return existing.getIdElement();
+				IBaseResource existing = searchByIdentifier("Organization", id.getSystem(), id.getValue());
+				if (existing != null) return new IdType(existing.getIdElement().getValue());
 			}
 		}
 		return null;
+	}
+
+	private IBaseResource searchByIdentifier(String resourceType, String system, String value) {
+		SearchParameterMap params = new SearchParameterMap();
+		params.setLoadSynchronous(true);
+		params.add("identifier", new TokenParam(system, value));
+		params.setCount(50);
+		IBundleProvider result = daoRegistry.getResourceDao(resourceType).search(params, new SystemRequestDetails());
+		List<IBaseResource> resources = result.getResources(0, Integer.MAX_VALUE);
+		if (resources.isEmpty()) return null;
+		return resources.stream()
+				.max(Comparator.comparing(r -> r.getMeta().getLastUpdated()))
+				.orElse(null);
 	}
 
 	private IBaseResource mergeIntoExisting(IBaseResource incoming, IdType existingId) {
@@ -91,7 +124,7 @@ public class PhEreferralDeduplicationInterceptor {
 			} else {
 				return null;
 			}
-			merged.setId(existingId);
+			merged.setId(existingId.toUnqualifiedVersionless());
 			daoRegistry.getResourceDao(existingId.getResourceType()).update(merged, new SystemRequestDetails());
 			return merged;
 		} catch (Exception e) {
@@ -99,49 +132,6 @@ public class PhEreferralDeduplicationInterceptor {
 			return null;
 		}
 	}
-
-	// ── Search ─────────────────────────────────────────────────────────────────
-
-	private Patient searchPatientByIdentifier(String system, String value) {
-		SearchParameterMap params = new SearchParameterMap();
-		params.setLoadSynchronous(true);
-		params.add(Patient.SP_IDENTIFIER, new TokenParam(system, value));
-		params.setCount(50);
-		IBundleProvider result = daoRegistry.getResourceDao("Patient").search(params, new SystemRequestDetails());
-		List<IBaseResource> resources = result.getResources(0, Integer.MAX_VALUE);
-		if (resources.isEmpty()) return null;
-		return (Patient) resources.stream()
-				.max(Comparator.comparing(r -> ((Patient) r).getMeta().getLastUpdated()))
-				.orElse(null);
-	}
-
-	private Practitioner searchPractitionerByIdentifier(String system, String value) {
-		SearchParameterMap params = new SearchParameterMap();
-		params.setLoadSynchronous(true);
-		params.add(Practitioner.SP_IDENTIFIER, new TokenParam(system, value));
-		params.setCount(50);
-		IBundleProvider result = daoRegistry.getResourceDao("Practitioner").search(params, new SystemRequestDetails());
-		List<IBaseResource> resources = result.getResources(0, Integer.MAX_VALUE);
-		if (resources.isEmpty()) return null;
-		return (Practitioner) resources.stream()
-				.max(Comparator.comparing(r -> ((Practitioner) r).getMeta().getLastUpdated()))
-				.orElse(null);
-	}
-
-	private Organization searchOrganizationByIdentifier(String system, String value) {
-		SearchParameterMap params = new SearchParameterMap();
-		params.setLoadSynchronous(true);
-		params.add(Organization.SP_IDENTIFIER, new TokenParam(system, value));
-		params.setCount(50);
-		IBundleProvider result = daoRegistry.getResourceDao("Organization").search(params, new SystemRequestDetails());
-		List<IBaseResource> resources = result.getResources(0, Integer.MAX_VALUE);
-		if (resources.isEmpty()) return null;
-		return (Organization) resources.stream()
-				.max(Comparator.comparing(r -> ((Organization) r).getMeta().getLastUpdated()))
-				.orElse(null);
-	}
-
-	// ── Merge ──────────────────────────────────────────────────────────────────
 
 	private Patient mergePatient(Patient existing, Patient incoming) {
 		Patient result = incoming.copy();
@@ -190,13 +180,11 @@ public class PhEreferralDeduplicationInterceptor {
 		return list == null || list.isEmpty();
 	}
 
-	// ── Exception ──────────────────────────────────────────────────────────────
-
 	private static class DedupResponseException extends BaseServerResponseException {
 		private static final long serialVersionUID = 1L;
 
-		DedupResponseException(IdType existingId) {
-			super(200, "Resource deduplicated; merged into " + existingId.toUnqualifiedVersionless().getValue());
+		DedupResponseException(IdType existingId, String summary) {
+			super(200, summary);
 		}
 
 		@Override

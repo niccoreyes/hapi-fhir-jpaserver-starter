@@ -447,7 +447,11 @@ public class StarterJpaConfig {
 			fhirServer.registerProvider(binaryAccessProvider.get());
 		}
 
-		// Validation
+		// Register custom interceptors FIRST so they run before built-in validation
+		// (e.g. dedup must merge before any validation runs)
+		registerCustomInterceptors(fhirServer, appContext, appProperties.getCustomInterceptorClasses());
+
+		// Request/Response Validation
 
 		if (validatorModule != null) {
 			if (appProperties.getValidation().getRequests_enabled()) {
@@ -491,10 +495,7 @@ public class StarterJpaConfig {
 		// reindex Provider $reindex
 		fhirServer.registerProvider(reindexProvider);
 
-		// Custom interceptors run before built-in validation (e.g. dedup merges before profile checks)
-		registerCustomInterceptors(fhirServer, appContext, appProperties.getCustomInterceptorClasses());
-
-		// Validation
+		// Validation (RepositoryValidatingInterceptor)
 		repositoryValidatingInterceptor.ifPresent(fhirServer::registerInterceptor);
 
 		// Diff Provider
