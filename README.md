@@ -8,9 +8,46 @@
 
 | File | Change | Reason |
 |------|--------|--------|
-| `RepositoryValidationInterceptorFactoryR4.java` | `.rejectOnSeverity(WARNING)` + suppression methods | Unknown code systems (e.g., PSGC) reject instead of warn |
-| `StarterJpaConfig.java` | Custom interceptors registered before `RepositoryValidatingInterceptor` | Dedup must run before validation |
-| `PhCoreDeduplicationInterceptor.java` | New interceptor in `ph.phcore.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles |
+| `RepositoryValidationInterceptorFactoryR4.java` | `.rejectOnSeverity(WARNING)` + `.suppressNoBindingMessage()` + `.suppressWarningForExtensibleValueSetValidation()` | Elevate terminology warnings to errors — reject resources with unresolvable code systems (e.g. PSGC, PSOC, PSCED) instead of warning. Suppress noise from extensible bindings and missing-binding messages. |
+| `StarterJpaConfig.java` | `registerCustomInterceptors()` placed **before** `RepositoryValidatingInterceptor` registration (line 489 vs line 536) | Dedup must run before validation so merged resources are validated once, not rejected pre-merge. |
+| `PhCoreDeduplicationInterceptor.java` | New `@Interceptor` in `ph.phcore.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles. |
+
+## Validation pipeline architecture
+
+```
+POST /Patient (or /Practitioner, /Organization)
+  │
+  ├─[1] SERVER_INCOMING_REQUEST_PRE_HANDLED  ← PhCoreDeduplicationInterceptor
+  │     • Checks identifiers against existing resources via DAO
+  │     • If duplicate: merges incoming→existing, stores result in RequestDetails
+  │     • For individual POST: throws DeduplicationMatchedException (HTTP 200)
+  │     • For transaction Bundle: converts POST→PUT with merged resource ID
+  │
+  ├─[2] SERVER_INCOMING_REQUEST_POST_PROCESSED  ← DISABLED (requests_enabled=false)
+  │     • RequestValidatingInterceptor would fire here, before the dedup hook
+  │     • Old-style IServerInterceptor — HAPI invokes before @Hook regardless
+  │       of registerInterceptor() order
+  │     • Must stay disabled to preserve dedup flow
+  │
+  ├─[3] STORAGE_PRESTORAGE_RESOURCE_CREATED  ← RepositoryValidatingInterceptor
+  │     • requireAtLeastOneProfileOf(all stored SDs for this resource type)
+  │     • requireValidationToDeclaredProfiles()
+  │     • rejectOnSeverity(WARNING) — strict: unknown codes → ERROR → reject
+  │     • enforce_referential_integrity_on_write — reject dangling references
+  │
+  └─[4] Response
+        • Individual dedup: Bundle (merged resource + OperationOutcome), HTTP 200
+          via SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME
+        • Normal success: HTTP 201 with Location header
+        • Validation failure: HTTP 422 with OperationOutcome
+
+GET /Patient/123
+  │
+  └─[5] ResponseValidatingInterceptor (responses_enabled=true)
+        • Validates outgoing resources
+        • Attaches X-Validation-* headers to responses
+        • Fires on response path — no conflict with dedup
+```
 
 ### Dedup interceptor details
 
@@ -18,6 +55,18 @@
 - Individual `POST`: merges via DAO, returns HTTP 200 with `Bundle` (merged resource + informational `OperationOutcome`)
 - Transaction `Bundle`: converts matching entries from `POST` to `PUT` against existing resource ID, preserving `fullUrl` for reference resolution
 - Response format via `SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME` — replaces `OperationOutcome` with merged resource
+- Merge strategy: incoming wins for set fields, existing preserved where incoming absent, identifiers unioned
+
+### RepositoryValidatingInterceptor modifications
+
+The `buildUsingStoredStructureDefinitions()` method in `RepositoryValidationInterceptorFactoryR4.java` is modified to add three method chains:
+
+1. `.rejectOnSeverity(ResultSeverityEnum.WARNING)` — Any validation issue at WARNING or above causes rejection. This catches:
+   - Unknown/unresolvable code systems (e.g. PSGC, PSOC, PSCED)
+   - Non-existent codes in known code systems
+   - Required field violations
+2. `.suppressNoBindingMessage()` — Suppresses informational messages about fields without bindings
+3. `.suppressWarningForExtensibleValueSetValidation()` — Suppresses warnings when a code is not found in an extensible binding's ValueSet
 
 ### Docker image
 
