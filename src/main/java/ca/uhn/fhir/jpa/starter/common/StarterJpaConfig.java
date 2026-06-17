@@ -85,6 +85,7 @@ import org.hl7.fhir.instance.model.api.IBaseBundle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
@@ -207,8 +208,12 @@ public class StarterJpaConfig {
 	@Bean
 	@ConditionalOnProperty(prefix = "hapi.fhir", name = ENABLE_REPOSITORY_VALIDATING_INTERCEPTOR, havingValue = "true")
 	public RepositoryValidatingInterceptor repositoryValidatingInterceptor(
-			IRepositoryValidationInterceptorFactory factory) {
-		return factory.buildUsingStoredStructureDefinitions();
+			IRepositoryValidationInterceptorFactory factory,
+			@Autowired(required = false) IPackageInstallerSvc packageInstallerSvc) {
+		RepositoryValidatingInterceptor interceptor = factory.buildUsingStoredStructureDefinitions();
+		ourLog.info("RepositoryValidatingInterceptor initialized (packageInstaller available: {})",
+				packageInstallerSvc != null);
+		return interceptor;
 	}
 
 	@Bean
