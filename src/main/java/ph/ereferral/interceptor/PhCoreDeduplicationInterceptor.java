@@ -34,16 +34,16 @@ import java.util.List;
 
 @Component
 @Interceptor
-public class PhEreferralDeduplicationInterceptor {
+public class PhCoreDeduplicationInterceptor {
 
-	private static final Logger ourLog = LoggerFactory.getLogger(PhEreferralDeduplicationInterceptor.class);
+	private static final Logger ourLog = LoggerFactory.getLogger(PhCoreDeduplicationInterceptor.class);
 
-	private static final String DEDUP_MERGED_KEY = PhEreferralDeduplicationInterceptor.class.getName() + ".MERGED";
-	private static final String DEDUP_EXISTING_ID_KEY = PhEreferralDeduplicationInterceptor.class.getName() + ".EXISTING_ID";
+	private static final String DEDUP_MERGED_KEY = PhCoreDeduplicationInterceptor.class.getName() + ".MERGED";
+	private static final String DEDUP_EXISTING_ID_KEY = PhCoreDeduplicationInterceptor.class.getName() + ".EXISTING_ID";
 
 	private final DaoRegistry daoRegistry;
 
-	public PhEreferralDeduplicationInterceptor(DaoRegistry daoRegistry) {
+	public PhCoreDeduplicationInterceptor(DaoRegistry daoRegistry) {
 		this.daoRegistry = daoRegistry;
 	}
 
