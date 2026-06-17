@@ -1,4 +1,4 @@
-package ph.ereferral.interceptor;
+package ph.phcore.interceptor;
 
 import ca.uhn.fhir.interceptor.api.Hook;
 import ca.uhn.fhir.interceptor.api.Interceptor;

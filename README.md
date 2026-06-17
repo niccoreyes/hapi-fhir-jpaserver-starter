@@ -10,7 +10,7 @@
 |------|--------|--------|
 | `RepositoryValidationInterceptorFactoryR4.java` | `.rejectOnSeverity(WARNING)` + suppression methods | Unknown code systems (e.g., PSGC) reject instead of warn |
 | `StarterJpaConfig.java` | Custom interceptors registered before `RepositoryValidatingInterceptor` | Dedup must run before validation |
-| `PhCoreDeduplicationInterceptor.java` | New interceptor in `ph.ereferral.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles |
+| `PhCoreDeduplicationInterceptor.java` | New interceptor in `ph.phcore.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles |
 
 ### Dedup interceptor details
 
