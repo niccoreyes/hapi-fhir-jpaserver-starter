@@ -32,6 +32,8 @@ public class MdmConfig {
 		String json = IOUtils.toString(resource.getInputStream(), StandardCharsets.UTF_8);
 		return new MdmSettings(theMdmRuleValidator)
 				.setEnabled(appProperties.getMdm_enabled())
-				.setScriptText(json);
+				.setScriptText(json)
+				.setPreventEidUpdates(false)
+				.setPreventMultipleEids(false);
 	}
 }

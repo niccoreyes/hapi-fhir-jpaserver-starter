@@ -11,6 +11,9 @@
 | `RepositoryValidationInterceptorFactoryR4.java` | `.rejectOnSeverity(WARNING)` + suppression methods | Unknown code systems (e.g., PSGC) reject instead of warn |
 | `StarterJpaConfig.java` | Custom interceptors registered before `RepositoryValidatingInterceptor` | Dedup must run before validation |
 | `PhCoreDeduplicationInterceptor.java` | New interceptor in `ph.phcore.interceptor` | Auto-merges duplicate Patient/Practitioner/Organization by identifier match — both individual POST and inside transaction Bundles |
+| `MdmConfig.java` | Customized `setPreventEidUpdates(false)` + `setPreventMultipleEids(false)` | Golden Resources receive merged source attributes; EIDs accumulate across linked sources |
+| `mdm-rules.json` | Loaded from `/app/config/mdm-rules.json` (host-mounted, not classpath) | PH Core identifier-only matching: PhilSys, PhilHealth, any practitioner/org identifier |
+| `application.yaml` | `mdm_enabled: true`, `subscription.resthook_enabled: true`, rules path `file:/app/config/mdm-rules.json` | Built-in HAPI MDM creates Golden Resources; subscriptions required for MDM async processing |
 
 ### Dedup interceptor details
 
@@ -18,6 +21,21 @@
 - Individual `POST`: merges via DAO, returns HTTP 200 with `Bundle` (merged resource + informational `OperationOutcome`)
 - Transaction `Bundle`: converts matching entries from `POST` to `PUT` against existing resource ID, preserving `fullUrl` for reference resolution
 - Response format via `SERVER_OUTGOING_FAILURE_OPERATIONOUTCOME` — replaces `OperationOutcome` with merged resource
+
+### MDM (Master Data Management)
+
+Built-in HAPI MDM is enabled (`mdm_enabled: true`) and configured to work alongside the interceptor:
+
+| Layer | Timing | Behavior |
+|---|---|---|
+| `PhCoreDeduplicationInterceptor` | Synchronous (PRE_HANDLED) | Exact identifier match → in-place merge → HTTP 200 Bundle to client |
+| HAPI built-in MDM | Asynchronous (subscription) | Identifier match via `mdm-rules.json` → link source to Golden with `HAPI-MDM` tag → survivorship fills Golden fields from merged source |
+
+- **Rules file**: `mdm-rules.json` is host-mounted (not baked into the JAR) — edit on the host and restart to update rules
+- **Survivorship**: `preventEidUpdates=false`, `preventMultipleEids=false` — Golden Resources receive merged source attributes; EIDs accumulate across linked sources
+- **Subscriptions**: REST hook enabled (internal in-memory broker) — required for MDM delivery
+- **MPI_LINK**: Auto-generated per match; queryable via `GET /$mdm/links`
+- **Golden Resources**: Tagged with `https://hapifhir.org/NamingSystem/managing-mdm-system | HAPI-MDM` — read‑only via REST, managed by MDM survivorship
 
 ### Docker image
 

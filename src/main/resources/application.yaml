@@ -331,8 +331,8 @@ hapi:
     # -------------------------------------------------------------------------------
     # H. MDM (Master Data Management)
     # -------------------------------------------------------------------------------
-    mdm_enabled: false
-    mdm_rules_json_location: "mdm-rules.json"
+    mdm_enabled: true
+    mdm_rules_json_location: "file:/app/config/mdm-rules.json"
     # userRequestRetryVersionConflictsInterceptorEnabled: false
 
     # -------------------------------------------------------------------------------
@@ -469,23 +469,23 @@ hapi:
     #     url: "https://hapi.fhir.org/baseR4/"
 
     # -------------------------------------------------------------------------------
-    # Q. Subscriptions (disabled by default)
+    # Q. Subscriptions (enabled — required for MDM)
     # -------------------------------------------------------------------------------
-    # subscription:
-    #   resthook_enabled: true
-    #   websocket_enabled: false
-    #   polling_interval_ms: 5000
-    #   immediately_queued: false
-    #   email:
-    #     from: some@test.com
-    #     host: google.com
-    #     port:
-    #     username:
-    #     password:
-    #     auth:
-    #       startTlsEnable:
-    #       startTlsRequired:
-    #       quitWait:
+    subscription:
+      resthook_enabled: true
+    #  websocket_enabled: false
+    #  polling_interval_ms: 5000
+    #  immediately_queued: false
+    #  email:
+    #    from: some@test.com
+    #    host: google.com
+    #    port:
+    #    username:
+    #    password:
+    #    auth:
+    #      startTlsEnable:
+    #      startTlsRequired:
+    #      quitWait:
 
     # -------------------------------------------------------------------------------
     # R. LastN (analytics)
