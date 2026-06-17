@@ -33,6 +33,7 @@ import ca.uhn.fhir.jpa.model.config.SubscriptionSettings;
 import ca.uhn.fhir.jpa.packages.AdditionalResourcesParser;
 import ca.uhn.fhir.jpa.packages.IHapiPackageCacheManager;
 import ca.uhn.fhir.jpa.packages.IPackageInstallerSvc;
+import ca.uhn.fhir.jpa.packages.PackageInstallationSpec;
 import ca.uhn.fhir.jpa.provider.DaoRegistryResourceSupportedSvc;
 import ca.uhn.fhir.jpa.provider.DiffProvider;
 import ca.uhn.fhir.jpa.provider.IJpaSystemProvider;
@@ -50,7 +51,6 @@ import ca.uhn.fhir.jpa.starter.annotations.OnCorsPresent;
 import ca.uhn.fhir.jpa.starter.annotations.OnImplementationGuidesPresent;
 import ca.uhn.fhir.jpa.starter.common.validation.IRepositoryValidationInterceptorFactory;
 import ca.uhn.fhir.jpa.starter.elastic.ElasticsearchBootSvcImpl;
-import ca.uhn.fhir.jpa.starter.ig.ExtendedPackageInstallationSpec;
 import ca.uhn.fhir.jpa.starter.ig.IImplementationGuideOperationProvider;
 import ca.uhn.fhir.jpa.subscription.util.SubscriptionDebugLogInterceptor;
 import ca.uhn.fhir.jpa.util.ResourceCountCache;
@@ -59,6 +59,7 @@ import ca.uhn.fhir.narrative.DefaultThymeleafNarrativeGenerator;
 import ca.uhn.fhir.narrative2.NullNarrativeGenerator;
 import ca.uhn.fhir.rest.api.IResourceSupportedSvc;
 import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
+import ca.uhn.fhir.rest.client.api.IRestfulClientFactory;
 import ca.uhn.fhir.rest.openapi.OpenApiInterceptor;
 import ca.uhn.fhir.rest.server.ApacheProxyAddressStrategy;
 import ca.uhn.fhir.rest.server.ETagSupportEnum;
@@ -87,6 +88,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
 import org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy;
@@ -134,6 +136,36 @@ public class StarterJpaConfig {
 		pagingProvider.setDefaultPageSize(appProperties.getDefault_page_size());
 		pagingProvider.setMaximumPageSize(appProperties.getMax_page_size());
 		return pagingProvider;
+	}
+
+	/**
+	 * Applies outbound HTTP client settings from {@code hapi.fhir.client.*} to the shared
+	 * {@link FhirContext} RestfulClientFactory.
+	 *
+	 * <p>The factory is used for every FHIR call the server makes on its own behalf:
+	 * remote terminology validation, IG package fetches, the web tester UI (HomeRequest),
+	 * and any custom interceptor or provider that calls
+	 * {@code fhirContext.newRestfulGenericClient(...)}. Configuring these values globally
+	 * here avoids scattering {@code getRestfulClientFactory().setSocketTimeout(...)} calls
+	 * across individual components.
+	 *
+	 * <p>All settings default to the upstream HAPI constants defined in
+	 * {@link IRestfulClientFactory} (10 000 ms for timeouts, 20 for pool sizes) so
+	 * existing deployments are unaffected unless they explicitly override via YAML or
+	 * environment variables.
+	 */
+	@Bean
+	public ApplicationRunner restfulClientFactoryConfigurer(FhirContext fhirContext, AppProperties appProperties) {
+		return args -> {
+			AppProperties.Client cfg = appProperties.getClient();
+			IRestfulClientFactory factory = fhirContext.getRestfulClientFactory();
+			factory.setSocketTimeout(cfg.getSocket_timeout());
+			factory.setConnectTimeout(cfg.getConnect_timeout());
+			factory.setConnectionRequestTimeout(cfg.getConnection_request_timeout());
+			factory.setConnectionTimeToLive(cfg.getConnection_ttl());
+			factory.setPoolMaxTotal(cfg.getPool_max_total());
+			factory.setPoolMaxPerRoute(cfg.getPool_max_per_route());
+		};
 	}
 
 	@Bean
@@ -245,9 +277,9 @@ public class StarterJpaConfig {
 		batch2JobRegisterer.start();
 
 		if (appProperties.getImplementationGuides() != null) {
-			Map<String, ExtendedPackageInstallationSpec> guides = appProperties.getImplementationGuides();
-			for (Map.Entry<String, ExtendedPackageInstallationSpec> guidesEntry : guides.entrySet()) {
-				ExtendedPackageInstallationSpec packageInstallationSpec = guidesEntry.getValue();
+			Map<String, PackageInstallationSpec> guides = appProperties.getImplementationGuides();
+			for (Map.Entry<String, PackageInstallationSpec> guidesEntry : guides.entrySet()) {
+				PackageInstallationSpec packageInstallationSpec = guidesEntry.getValue();
 				if (appProperties.getInstall_transitive_ig_dependencies()) {
 
 					packageInstallationSpec
