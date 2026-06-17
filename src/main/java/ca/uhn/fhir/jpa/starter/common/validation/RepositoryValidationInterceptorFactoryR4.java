@@ -9,9 +9,14 @@ import ca.uhn.fhir.jpa.interceptor.validation.RepositoryValidatingRuleBuilder;
 import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.jpa.starter.annotations.OnR4Condition;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
+import ca.uhn.fhir.rest.api.server.SystemRequestDetails;
 import ca.uhn.fhir.rest.param.TokenParam;
+import ca.uhn.fhir.rest.param.UriParam;
 import ca.uhn.fhir.validation.ResultSeverityEnum;
+import org.hl7.fhir.r4.model.Enumerations;
 import org.hl7.fhir.r4.model.StructureDefinition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
@@ -45,8 +50,54 @@ public class RepositoryValidationInterceptorFactoryR4 implements IRepositoryVali
 		structureDefinitionResourceProvider = daoRegistry.getResourceDao("StructureDefinition");
 	}
 
+	private static final Logger log = LoggerFactory.getLogger(RepositoryValidationInterceptorFactoryR4.class);
+
+	private static final String[][] SLICING_EXTENSIONS = {
+		{"http://hl7.org/fhir/StructureDefinition/individual-genderIdentity",
+		 "Individual Gender Identity"},
+		{"http://hl7.org/fhir/StructureDefinition/individual-recordedSexOrGender",
+		 "Individual Recorded Sex Or Gender"},
+		{"http://hl7.org/fhir/StructureDefinition/individual-pronouns",
+		 "Individual Pronouns"}
+	};
+
+	private void ensureSlicingExtensions() {
+		for (String[] ext : SLICING_EXTENSIONS) {
+			String url = ext[0];
+			String title = ext[1];
+			IBundleProvider result = structureDefinitionResourceProvider.search(
+				new SearchParameterMap()
+					.setLoadSynchronous(true)
+					.add("url", new UriParam(url)));
+			if (result.size() > 0) {
+				log.debug("Extension SD already stored: {}", url);
+				continue;
+			}
+			StructureDefinition sd = new StructureDefinition();
+			sd.setId("phcore-ext-" + title.replace(" ", ""));
+			sd.setUrl(url);
+			sd.setName(title.replace(" ", ""));
+			sd.setTitle(title);
+			sd.setStatus(Enumerations.PublicationStatus.ACTIVE);
+			sd.setKind(StructureDefinition.StructureDefinitionKind.COMPLEXTYPE);
+			sd.setAbstract(false);
+			sd.setType("Extension");
+			sd.setBaseDefinition("http://hl7.org/fhir/StructureDefinition/Extension");
+			sd.setDerivation(StructureDefinition.TypeDerivationRule.CONSTRAINT);
+			sd.setFhirVersion(Enumerations.FHIRVersion._4_0_1);
+			try {
+				structureDefinitionResourceProvider.create(sd, new SystemRequestDetails());
+				log.info("Inserted extension SD for slicing: {}", url);
+			} catch (Exception e) {
+				log.warn("Failed to insert extension SD {}: {}", url, e.getMessage());
+			}
+		}
+	}
+
 	@Override
 	public RepositoryValidatingInterceptor buildUsingStoredStructureDefinitions() {
+
+		ensureSlicingExtensions();
 
 		IBundleProvider results = structureDefinitionResourceProvider.search(new SearchParameterMap()
 				.setLoadSynchronous(true)
